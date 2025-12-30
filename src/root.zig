@@ -125,6 +125,16 @@ pub const State = struct {
         return lua_str;
     }
 
+    pub fn pushLightUserdata(self: *const State, p: ?*anyopaque) void {
+        c.lua_pushlightuserdata(self.inner, p);
+    }
+
+    pub fn pushCFunction(self: *const State, f: CFunction) void {
+        pushCClosure(self, f, 0);
+    }
+    pub fn pushCClosure(self: *const State, f: CFunction, n: usize) void {
+        c.lua_pushcclosure(self.inner, f, @intCast(n));
+    }
     /// Loads a string as a Lua chunk. This function uses lua_load to load the chunk in the zero-terminated string s.
     /// This function returns the same results as lua_load.
     /// Also as lua_load, this function only loads the chunk; it does not run it.
@@ -133,6 +143,13 @@ pub const State = struct {
         try checkError(state, rc);
     }
 
+    pub fn loadBufferx(self: *const State, buff: []const u8, name: [:0]const u8, mode: [*c]const u8) Error!void {
+        try checkError(self, c.luaL_loadbufferx(self.inner, buff.ptr, buff.len, name, mode));
+    }
+
+    pub fn loadBuffer(self: *const State, buff: []const u8, name: [:0]const u8) Error!void {
+        try self.loadBufferx(buff, name, null);
+    }
     fn printLuaError(state: ?*c.lua_State) void {
         var len: usize = 0;
         const msg = c.lua_tolstring(state, -1, &len);
@@ -155,15 +172,8 @@ pub const State = struct {
     /// since by then the stack has unwound.
     ///
     /// The lua_pcall function returns one of the following status codes: LUA_OK, LUA_ERRRUN, LUA_ERRMEM, or LUA_ERRERR.
-    /// FIX: doesnt wooooork
     pub fn pcall(state: *State, nargs: isize, nresults: isize, msgh: isize) !void {
-        const rc = c.lua_pcall(
-            state.inner,
-            @as(c_int, @intCast(nargs)),
-            @as(c_int, @intCast(nresults)),
-            @as(c_int, @intCast(msgh)),
-        );
-        try checkError(state, rc);
+        try state.pcallk(nargs, nresults, msgh, 0, null);
     }
 
     /// This function behaves exactly like lua_pcall, except that it allows the called function to yield (see §4.5).
@@ -179,6 +189,7 @@ pub const State = struct {
         try checkError(state, rc);
     }
 
+    /// TODO: convert to Error union
     fn checkError(state: *const State, rc: c_int) Error!void {
         if (rc != c.LUA_OK) {
             printLuaError(state.inner);
@@ -210,6 +221,28 @@ pub const State = struct {
         slice.ptr = ptr;
         slice.len = len;
         return slice;
+    }
+
+    pub fn toUserdata(self: *const State, index: isize) ?*anyopaque {
+        return c.lua_touserdata(self.inner, @intCast(index));
+    }
+
+    /// Pops a value from the stack and sets it as the new value of global name.
+    pub fn setGlobal(self: *const State, name: [:0]const u8) void {
+        c.lua_setglobal(self.inner, name);
+    }
+
+    /// Pushes a nil value onto the stack.
+    pub fn pushNil(self: *const State) void {
+        c.lua_pushnil(self.inner);
+    }
+
+    pub fn pushBoolean(self: *const State, b: bool) void {
+        c.lua_pushboolean(self.inner, @intFromBool(b));
+    }
+
+    pub fn getTop(self: *const State) isize {
+        return @intCast(c.lua_gettop(self.inner));
     }
 
     ///Pops n elements from the stack.
