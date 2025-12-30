@@ -24,6 +24,14 @@ pub const Error = error{
     UnknownError,
 };
 
+pub const Lib = struct {
+    pub const base = c.luaopen_base;
+    pub const coroutine = c.luaopen_coroutine;
+    pub const package = c.luaopen_package;
+    pub const utf8 = c.luaopen_utf8;
+    // TODO: add more libs;
+};
+
 pub const State = struct {
     inner: *LuaState = undefined,
     /// The allocator for which lua will use for all allocations.
@@ -78,10 +86,49 @@ pub const State = struct {
         c.luaL_openlibs(self.inner);
     }
 
+    /// Creates a new empty table and pushes it onto the stack. It is equivalent to `createTable(0, 0)`
+    pub fn newTable(self: *const State) void {
+        self.createTable(0, 0);
+    }
+
+    pub fn createTable(self: *const State, narr: usize, nrec: usize) void {
+        c.lua_createtable(self.inner, @intCast(narr), @intCast(nrec));
+    }
+
+    /// Does the equivalent to `t[k] = v`,
+    /// where t is the value at the given index and v is the value on the top of the stack.
+    /// This function pops the value from the stack. As in Lua,
+    /// this function may trigger a metamethod for the "newindex" event (see §2.4).
+    pub fn setField(self: *const State, index: isize, k: [:0]const u8) void {
+        c.lua_setfield(self.inner, @intCast(index), k);
+    }
+    /// If package.loaded[modname] is not true,
+    /// calls the function openf with the string modname as an argument
+    /// and sets the call result to package.loaded[modname], as if that function has been called through require.
+    ///
+    /// If glb is true, also stores the module into the global modname.
+    ///
+    /// Leaves a copy of the module on the stack.
+    pub fn requiref(self: *const State, modname: [:0]const u8, open_l: CFunction, glb: bool) void {
+        c.luaL_requiref(self.inner, modname, open_l, @intFromBool(glb));
+    }
+
+    /// Pushes the string pointed to by s with size len onto the stack.
+    /// Lua will make or reuse an internal copy of the given string,
+    /// so the memory at `str` can be freed or reused immediately after the function returns.
+    /// The string can contain any binary data, including embedded zeros.
+    pub fn pushlString(self: *const State, str: []const u8) []const u8 {
+        const ptr = c.lua_pushlstring(self.inner, str.ptr, str.len);
+        var lua_str: []const u8 = undefined;
+        lua_str.ptr = ptr;
+        lua_str.len = str.len;
+        return lua_str;
+    }
+
     /// Loads a string as a Lua chunk. This function uses lua_load to load the chunk in the zero-terminated string s.
     /// This function returns the same results as lua_load.
     /// Also as lua_load, this function only loads the chunk; it does not run it.
-    pub fn loadString(state: *State, string: [:0]const u8) Error!void {
+    pub fn loadString(state: *const State, string: [:0]const u8) Error!void {
         const rc = c.luaL_loadstring(state.inner, string);
         try checkError(state, rc);
     }
@@ -120,7 +167,7 @@ pub const State = struct {
     }
 
     /// This function behaves exactly like lua_pcall, except that it allows the called function to yield (see §4.5).
-    pub fn pcallk(state: *State, nargs: isize, nresults: isize, msgh: isize, ctx: isize, k: KFunction) !void {
+    pub fn pcallk(state: *const State, nargs: isize, nresults: isize, msgh: isize, ctx: isize, k: KFunction) !void {
         const rc = c.lua_pcallk(
             state.inner,
             @as(c_int, @intCast(nargs)),
@@ -156,7 +203,7 @@ pub const State = struct {
         return @enumFromInt(c.lua_type(state.inner, idx));
     }
 
-    pub fn toLString(state: *State, idx: isize) []const u8 {
+    pub fn toLString(state: *const State, idx: isize) []const u8 {
         var len: usize = 0;
         const ptr = c.lua_tolstring(state.inner, @intCast(idx), &len);
         var slice: []const u8 = undefined;
@@ -237,4 +284,5 @@ pub const Op = enum(c_int) {
     // TODO: add more ops
 };
 
+pub const CFunction = *const fn (?*LuaState) callconv(.c) c_int;
 pub const KFunction = ?*const fn (state: ?*LuaState, status: isize, ctx: isize) callconv(.c) isize;
