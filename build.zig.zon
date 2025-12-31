@@ -1,11 +1,11 @@
 .{
     .name = .zlua,
-    .version = "5.4.8", // keep in sync with lua version
+    .version = "5.5.0", // keep in sync with lua version
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .lua = .{
-            .url = "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
-            .hash = "N-V-__8AAKEzFAAA695b9LXBhUSVK5MAV_VKSm1mEj3Acbze",
+            .url = "https://www.lua.org/ftp/lua-5.5.0.tar.gz",
+            .hash = "N-V-__8AAGuAFQAFQL34FRuOIGC9klkZq44uTTan4cUS9vas",
         },
     },
     .paths = .{

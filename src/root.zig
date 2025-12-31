@@ -48,9 +48,9 @@ pub const State = struct {
     /// var lua: zlua.State = .{ .gpa = gpa };
     /// try lua.new();
     /// ```
-    pub fn new(self: *State) Error!void {
+    pub fn new(self: *State, seed: u32) Error!void {
         if (self.gpa) |*gpa| {
-            if (c.lua_newstate(alloc, gpa)) |state| {
+            if (c.lua_newstate(alloc, gpa, seed)) |state| {
                 self.inner = state;
                 return;
             }
@@ -211,7 +211,7 @@ pub const State = struct {
 
     /// Returns the type of the value in the given valid index
     pub fn typeOf(state: *const State, idx: isize) Type {
-        return @enumFromInt(c.lua_type(state.inner, idx));
+        return @enumFromInt(c.lua_type(state.inner, @intCast(idx)));
     }
 
     pub fn toLString(state: *const State, idx: isize) []const u8 {
@@ -221,6 +221,14 @@ pub const State = struct {
         slice.ptr = ptr;
         slice.len = len;
         return slice;
+    }
+
+    pub fn rawLen(self: *const State, idx: isize) usize {
+        return c.lua_rawlen(self.inner, @intCast(idx));
+    }
+
+    pub fn rawGeti(self: *const State, idx: i32, n: usize) Type {
+        return @enumFromInt(c.lua_rawgeti(self.inner, idx, @intCast(n)));
     }
 
     pub fn toUserdata(self: *const State, index: isize) ?*anyopaque {
@@ -246,7 +254,7 @@ pub const State = struct {
     }
 
     ///Pops n elements from the stack.
-    pub fn pop(self: *const State, n: isize) void {
+    pub fn pop(self: *const State, n: usize) void {
         c.lua_pop(self.inner, @as(c_int, @intCast(n)));
     }
 
