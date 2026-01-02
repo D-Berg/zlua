@@ -135,6 +135,11 @@ pub const State = struct {
     pub fn pushCClosure(self: *const State, f: CFunction, n: usize) void {
         c.lua_pushcclosure(self.inner, f, @intCast(n));
     }
+
+    pub fn upvalueIndex(self: *const State, n: u32) isize {
+        _ = self;
+        return c.lua_upvalueindex(@as(c_int, @intCast(n)));
+    }
     /// Loads a string as a Lua chunk. This function uses lua_load to load the chunk in the zero-terminated string s.
     /// This function returns the same results as lua_load.
     /// Also as lua_load, this function only loads the chunk; it does not run it.
