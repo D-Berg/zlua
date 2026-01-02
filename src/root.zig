@@ -21,7 +21,23 @@ pub const MultiRet = c.LUA_MULTRET;
 
 pub const Error = error{
     NewStateError,
-    UnknownError,
+    /// a runtime error.
+    Run,
+    /// memory allocation error. For such errors, Lua does not call the message handler.
+    Mem,
+    /// stack overflow while running the message handler due to another stack overflow.
+    /// More often than not, this error is the result of some other error while running a message handler.
+    /// An error in a message handler will call the handler again, which will generate the error again,
+    /// and so on, until this loop exhausts the stack and cause this error.
+    Err,
+    /// syntax error during precompilation or format error in a binary chunk.
+    Syntax,
+    /// the thread (coroutine) yields.
+    Yield,
+    ///  a file-related error; e.g., it cannot open or read the file.
+    File,
+
+    Unknown,
 };
 
 pub const Lib = struct {
@@ -144,21 +160,15 @@ pub const State = struct {
     /// This function returns the same results as lua_load.
     /// Also as lua_load, this function only loads the chunk; it does not run it.
     pub fn loadString(state: *const State, string: [:0]const u8) Error!void {
-        const rc = c.luaL_loadstring(state.inner, string);
-        try checkError(state, rc);
+        try checkError(c.luaL_loadstring(state.inner, string));
     }
 
     pub fn loadBufferx(self: *const State, buff: []const u8, name: [:0]const u8, mode: [*c]const u8) Error!void {
-        try checkError(self, c.luaL_loadbufferx(self.inner, buff.ptr, buff.len, name, mode));
+        try checkError(c.luaL_loadbufferx(self.inner, buff.ptr, buff.len, name, mode));
     }
 
     pub fn loadBuffer(self: *const State, buff: []const u8, name: [:0]const u8) Error!void {
         try self.loadBufferx(buff, name, null);
-    }
-    fn printLuaError(state: ?*c.lua_State) void {
-        var len: usize = 0;
-        const msg = c.lua_tolstring(state, -1, &len);
-        if (msg != null) std.debug.print("{s}\n", .{msg[0..len]});
     }
 
     /// Calls a function (or a callable object) in protected mode.
@@ -183,22 +193,27 @@ pub const State = struct {
 
     /// This function behaves exactly like lua_pcall, except that it allows the called function to yield (see §4.5).
     pub fn pcallk(state: *const State, nargs: isize, nresults: isize, msgh: isize, ctx: isize, k: KFunction) !void {
-        const rc = c.lua_pcallk(
+        try checkError(c.lua_pcallk(
             state.inner,
             @as(c_int, @intCast(nargs)),
             @as(c_int, @intCast(nresults)),
             @as(c_int, @intCast(msgh)),
             ctx,
             @ptrCast(k),
-        );
-        try checkError(state, rc);
+        ));
     }
 
     /// TODO: convert to Error union
-    fn checkError(state: *const State, rc: c_int) Error!void {
-        if (rc != c.LUA_OK) {
-            printLuaError(state.inner);
-            return Error.UnknownError;
+    fn checkError(rc: c_int) Error!void {
+        switch (rc) {
+            c.LUA_OK => return,
+            c.LUA_ERRRUN => return Error.Run,
+            c.LUA_ERRMEM => return Error.Mem,
+            c.LUA_ERRERR => return Error.Err,
+            c.LUA_ERRSYNTAX => return Error.Syntax,
+            c.LUA_YIELD => return Error.Yield,
+            c.LUA_ERRFILE => return Error.File,
+            else => return Error.Unknown,
         }
     }
 
