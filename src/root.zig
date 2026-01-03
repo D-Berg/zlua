@@ -187,7 +187,7 @@ pub const State = struct {
     /// since by then the stack has unwound.
     ///
     /// The lua_pcall function returns one of the following status codes: LUA_OK, LUA_ERRRUN, LUA_ERRMEM, or LUA_ERRERR.
-    pub fn pcall(state: *State, nargs: isize, nresults: isize, msgh: isize) !void {
+    pub fn pcall(state: *const State, nargs: isize, nresults: isize, msgh: isize) !void {
         try state.pcallk(nargs, nresults, msgh, 0, null);
     }
 
