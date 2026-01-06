@@ -255,6 +255,11 @@ pub const State = struct {
         return c.lua_touserdata(self.inner, @intCast(index));
     }
 
+    pub fn toBoolean(self: *const State, index: isize) bool {
+        if (c.lua_toboolean(self.inner, @intCast(index)) == 0) return false;
+        return true;
+    }
+
     /// Pops a value from the stack and sets it as the new value of global name.
     pub fn setGlobal(self: *const State, name: [:0]const u8) void {
         c.lua_setglobal(self.inner, name);
