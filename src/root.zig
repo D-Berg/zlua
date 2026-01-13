@@ -291,36 +291,35 @@ pub const State = struct {
     }
 };
 
+const alignment = @alignOf(std.c.max_align_t);
 fn alloc(
     maybe_ud: ?*anyopaque,
-    maybe_ptr: ?*anyopaque,
+    ptr: ?*anyopaque,
     osize: usize,
     nsize: usize,
-) callconv(.c) ?*anyopaque {
+) callconv(.c) ?*align(alignment) anyopaque {
     const gpa: *Allocator = @ptrCast(@alignCast(maybe_ud));
 
-    if (nsize == 0) {
-        if (maybe_ptr) |ptr| {
-            var slice: []u8 = undefined;
-            slice.ptr = @ptrCast(ptr);
-            slice.len = osize;
+    // https://github.com/natecraddock/ziglua/blob/188ba36e8054bcf1929117fb7c96d9f939296059/src/lib.zig#L599C5-L628C6
+    // ziglua MIT Copyright (c) 2022 Nathan Craddock
+    if (@as(?[*]align(alignment) u8, @ptrCast(@alignCast(ptr)))) |prev_ptr| {
+        const prev_slice = prev_ptr[0..osize];
 
-            gpa.free(slice);
+        // when nsize is zero the allocator must behave like free and return null
+        if (nsize == 0) {
+            gpa.free(prev_slice);
+            return null;
         }
-    } else if (maybe_ptr) |ptr| {
-        var slice: []u8 = undefined;
-        slice.ptr = @ptrCast(ptr);
-        slice.len = osize;
 
-        const new_slice = gpa.realloc(slice, nsize) catch return null;
-        return @ptrCast(new_slice.ptr);
-    } else {
-        const slice = gpa.alloc(u8, nsize) catch return null;
-        @memset(slice, 0);
-        return @ptrCast(slice.ptr);
+        // when nsize is not zero the allocator must behave like realloc
+        const new_ptr = gpa.realloc(prev_slice, nsize) catch return null;
+        return new_ptr.ptr;
+    } else if (nsize == 0) {
+        return null;
+    } else { // ptr is null, allocate a new block of memory
+        const new_ptr = gpa.alignedAlloc(u8, .fromByteUnits(alignment), nsize) catch return null;
+        return new_ptr.ptr;
     }
-
-    return null;
 }
 
 pub const Type = enum(c_int) {
