@@ -247,8 +247,8 @@ pub const State = struct {
         return c.lua_rawlen(self.inner, @intCast(idx));
     }
 
-    pub fn rawGeti(self: *const State, idx: i32, n: usize) Type {
-        return @enumFromInt(c.lua_rawgeti(self.inner, idx, @intCast(n)));
+    pub fn rawGeti(self: *const State, idx: isize, n: usize) Type {
+        return @enumFromInt(c.lua_rawgeti(self.inner, @intCast(idx), @intCast(n)));
     }
 
     pub fn toUserdata(self: *const State, index: isize) ?*anyopaque {
