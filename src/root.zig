@@ -14,10 +14,9 @@
 const std = @import("std");
 const c = @import("c");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 pub const LuaState = c.lua_State;
-
-pub const MultiRet = c.LUA_MULTRET;
 
 pub const Error = error{
     NewStateError,
@@ -115,8 +114,8 @@ pub const State = struct {
     /// where t is the value at the given index and v is the value on the top of the stack.
     /// This function pops the value from the stack. As in Lua,
     /// this function may trigger a metamethod for the "newindex" event (see §2.4).
-    pub fn setField(self: *const State, index: isize, k: [:0]const u8) void {
-        c.lua_setfield(self.inner, @intCast(index), k);
+    pub fn setField(self: *const State, idx: i32, k: [:0]const u8) void {
+        c.lua_setfield(self.inner, idx, k);
     }
     /// If package.loaded[modname] is not true,
     /// calls the function openf with the string modname as an argument
@@ -152,8 +151,9 @@ pub const State = struct {
         c.lua_pushcclosure(self.inner, f, @intCast(n));
     }
 
-    pub fn upvalueIndex(self: *const State, n: u32) isize {
+    pub fn upvalueIndex(self: *const State, n: u32) i32 {
         _ = self;
+        assert(n >= 1 and n <= 256);
         return c.lua_upvalueindex(@as(c_int, @intCast(n)));
     }
     /// Loads a string as a Lua chunk. This function uses lua_load to load the chunk in the zero-terminated string s.
@@ -187,12 +187,12 @@ pub const State = struct {
     /// since by then the stack has unwound.
     ///
     /// The lua_pcall function returns one of the following status codes: LUA_OK, LUA_ERRRUN, LUA_ERRMEM, or LUA_ERRERR.
-    pub fn pcall(state: *const State, nargs: isize, nresults: isize, msgh: isize) !void {
+    pub fn pcall(state: *const State, nargs: u32, nresults: i32, msgh: isize) !void {
         try state.pcallk(nargs, nresults, msgh, 0, null);
     }
 
     /// This function behaves exactly like lua_pcall, except that it allows the called function to yield (see §4.5).
-    pub fn pcallk(state: *const State, nargs: isize, nresults: isize, msgh: isize, ctx: isize, k: KFunction) !void {
+    pub fn pcallk(state: *const State, nargs: u32, nresults: i32, msgh: isize, ctx: isize, k: KFunction) !void {
         try checkError(c.lua_pcallk(
             state.inner,
             @as(c_int, @intCast(nargs)),
@@ -220,43 +220,43 @@ pub const State = struct {
     ///Pushes onto the stack the value `t[k]`, where t is the value at the given index.
     ///As in Lua, this function may trigger a metamethod for the "index" event (see §2.4).
     //Returns the type of the pushed value.
-    pub fn getField(state: *const State, idx: isize, field: [:0]const u8) Type {
-        return @enumFromInt(c.lua_getfield(state.inner, @intCast(idx), field));
+    pub fn getField(state: *const State, idx: i32, field: [:0]const u8) Type {
+        return @enumFromInt(c.lua_getfield(state.inner, idx, field));
     }
 
-    pub fn isBoolean(state: *const State, idx: isize) bool {
+    pub fn isBoolean(state: *const State, idx: i32) bool {
         if (c.lua_isboolean(state.inner, idx) == 1) return true;
         return false;
     }
 
     /// Returns the type of the value in the given valid index
-    pub fn typeOf(state: *const State, idx: isize) Type {
-        return @enumFromInt(c.lua_type(state.inner, @intCast(idx)));
+    pub fn typeOf(state: *const State, idx: i32) Type {
+        return @enumFromInt(c.lua_type(state.inner, idx));
     }
 
-    pub fn toLString(state: *const State, idx: isize) []const u8 {
+    pub fn toLString(state: *const State, idx: i32) []const u8 {
         var len: usize = 0;
-        const ptr = c.lua_tolstring(state.inner, @intCast(idx), &len);
+        const ptr = c.lua_tolstring(state.inner, idx, &len);
         var slice: []const u8 = undefined;
         slice.ptr = ptr;
         slice.len = len;
         return slice;
     }
 
-    pub fn rawLen(self: *const State, idx: isize) usize {
-        return c.lua_rawlen(self.inner, @intCast(idx));
+    pub fn rawLen(self: *const State, idx: i32) usize {
+        return c.lua_rawlen(self.inner, idx);
     }
 
-    pub fn rawGeti(self: *const State, idx: isize, n: usize) Type {
-        return @enumFromInt(c.lua_rawgeti(self.inner, @intCast(idx), @intCast(n)));
+    pub fn rawGetI(self: *const State, idx: i32, n: isize) Type {
+        return @enumFromInt(c.lua_rawgeti(self.inner, idx, n));
     }
 
-    pub fn toUserdata(self: *const State, index: isize) ?*anyopaque {
-        return c.lua_touserdata(self.inner, @intCast(index));
+    pub fn toUserdata(self: *const State, idx: i32) ?*anyopaque {
+        return c.lua_touserdata(self.inner, idx);
     }
 
-    pub fn toBoolean(self: *const State, index: isize) bool {
-        if (c.lua_toboolean(self.inner, @intCast(index)) == 0) return false;
+    pub fn toBoolean(self: *const State, idx: i32) bool {
+        if (c.lua_toboolean(self.inner, idx) == 0) return false;
         return true;
     }
 
@@ -274,20 +274,20 @@ pub const State = struct {
         c.lua_pushboolean(self.inner, @intFromBool(b));
     }
 
-    pub fn getTop(self: *const State) isize {
-        return @intCast(c.lua_gettop(self.inner));
+    pub fn getTop(self: *const State) i32 {
+        return c.lua_gettop(self.inner);
     }
 
     ///Pops n elements from the stack.
-    pub fn pop(self: *const State, n: usize) void {
-        c.lua_pop(self.inner, @as(c_int, @intCast(n)));
+    pub fn pop(self: *const State, n: i32) void {
+        c.lua_pop(self.inner, n);
     }
 
     /// Removes the element at the given valid index,
     /// shifting down the elements above this index to fill the gap.
     /// This function cannot be called with a pseudo-index, because a pseudo-index is not an actual stack position.
-    pub fn remove(self: *const State, index: isize) void {
-        c.lua_remove(self.inner, index);
+    pub fn remove(self: *const State, idx: i32) void {
+        c.lua_remove(self.inner, idx);
     }
 };
 
