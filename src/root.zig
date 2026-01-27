@@ -140,6 +140,10 @@ pub const State = struct {
         return lua_str;
     }
 
+    pub fn pushInteger(self: *const State, n: c.lua_Integer) void {
+        c.lua_pushinteger(self.inner, n);
+    }
+
     pub fn pushLightUserdata(self: *const State, p: ?*anyopaque) void {
         c.lua_pushlightuserdata(self.inner, p);
     }
