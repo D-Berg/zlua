@@ -12,9 +12,14 @@
 //! 'e' means the function can run arbitrary Lua code, either directly or through metamethods, and therefore may raise any errors.
 
 const std = @import("std");
+const builting = @import("builtin");
 const c = @import("c");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+
+const LuaInteger = i64;
+const LuaNumber = f64;
+const Idx = i32;
 
 pub const LuaState = c.lua_State;
 
@@ -44,6 +49,7 @@ pub const Lib = struct {
     pub const coroutine = c.luaopen_coroutine;
     pub const package = c.luaopen_package;
     pub const utf8 = c.luaopen_utf8;
+    pub const string = c.luaopen_string;
     // TODO: add more libs;
 };
 
@@ -114,25 +120,15 @@ pub const State = struct {
     /// where t is the value at the given index and v is the value on the top of the stack.
     /// This function pops the value from the stack. As in Lua,
     /// this function may trigger a metamethod for the "newindex" event (see §2.4).
-    pub fn setField(self: *const State, idx: i32, k: [:0]const u8) void {
-        c.lua_setfield(self.inner, idx, k);
-    }
-    /// If package.loaded[modname] is not true,
-    /// calls the function openf with the string modname as an argument
-    /// and sets the call result to package.loaded[modname], as if that function has been called through require.
-    ///
-    /// If glb is true, also stores the module into the global modname.
-    ///
-    /// Leaves a copy of the module on the stack.
-    pub fn requiref(self: *const State, modname: [:0]const u8, open_l: CFunction, glb: bool) void {
-        c.luaL_requiref(self.inner, modname, open_l, @intFromBool(glb));
+    pub fn setField(self: *const State, index: Idx, k: [:0]const u8) void {
+        c.lua_setfield(self.inner, index, k);
     }
 
     /// Pushes the string pointed to by s with size len onto the stack.
     /// Lua will make or reuse an internal copy of the given string,
     /// so the memory at `str` can be freed or reused immediately after the function returns.
     /// The string can contain any binary data, including embedded zeros.
-    pub fn pushlString(self: *const State, str: []const u8) []const u8 {
+    pub fn pushLString(self: *const State, str: []const u8) []const u8 {
         const ptr = c.lua_pushlstring(self.inner, str.ptr, str.len);
         var lua_str: []const u8 = undefined;
         lua_str.ptr = ptr;
@@ -140,8 +136,21 @@ pub const State = struct {
         return lua_str;
     }
 
-    pub fn pushInteger(self: *const State, n: c.lua_Integer) void {
+    pub fn pushString(self: *const State, str: [:0]const u8) [:0]const u8 {
+        return std.mem.sliceTo(c.lua_pushstring(self.inner, str), 0);
+    }
+
+    pub fn pushInteger(self: *const State, n: LuaInteger) void {
         c.lua_pushinteger(self.inner, n);
+    }
+
+    pub fn pushNumber(self: *const State, n: LuaNumber) void {
+        c.lua_pushnumber(self.inner, n);
+    }
+
+    /// Returns true if this thread is the main thread of its state.
+    pub fn pushThread(self: *const State) bool {
+        return c.lua_pushthread(self.inner) == 1;
     }
 
     pub fn pushLightUserdata(self: *const State, p: ?*anyopaque) void {
@@ -159,20 +168,6 @@ pub const State = struct {
         _ = self;
         assert(n >= 1 and n <= 256);
         return c.lua_upvalueindex(@as(c_int, @intCast(n)));
-    }
-    /// Loads a string as a Lua chunk. This function uses lua_load to load the chunk in the zero-terminated string s.
-    /// This function returns the same results as lua_load.
-    /// Also as lua_load, this function only loads the chunk; it does not run it.
-    pub fn loadString(state: *const State, string: [:0]const u8) Error!void {
-        try checkError(c.luaL_loadstring(state.inner, string));
-    }
-
-    pub fn loadBufferx(self: *const State, buff: []const u8, name: [:0]const u8, mode: [*c]const u8) Error!void {
-        try checkError(c.luaL_loadbufferx(self.inner, buff.ptr, buff.len, name, mode));
-    }
-
-    pub fn loadBuffer(self: *const State, buff: []const u8, name: [:0]const u8) Error!void {
-        try self.loadBufferx(buff, name, null);
     }
 
     /// Calls a function (or a callable object) in protected mode.
@@ -221,47 +216,236 @@ pub const State = struct {
         }
     }
 
+    pub fn toInteger(self: *const State, index: Idx) LuaInteger {
+        return self.toIntegerX(index, null);
+    }
+
+    pub fn toIntegerX(self: *const State, index: Idx, is_num: ?*bool) LuaInteger {
+        var c_is_num: c_int = 0;
+        const res = c.lua_tointegerx(self.inner, index, if (is_num != null) &c_is_num else null);
+        if (is_num) |b| {
+            b.* = if (c_is_num == 0) false else true;
+        }
+        return res;
+    }
+
     ///Pushes onto the stack the value `t[k]`, where t is the value at the given index.
     ///As in Lua, this function may trigger a metamethod for the "index" event (see §2.4).
     //Returns the type of the pushed value.
-    pub fn getField(state: *const State, idx: i32, field: [:0]const u8) Type {
-        return @enumFromInt(c.lua_getfield(state.inner, idx, field));
+    pub fn getField(state: *const State, index: Idx, field: [:0]const u8) Type {
+        return @enumFromInt(c.lua_getfield(state.inner, index, field));
     }
 
-    pub fn isBoolean(state: *const State, idx: i32) bool {
-        if (c.lua_isboolean(state.inner, idx) == 1) return true;
-        return false;
+    pub fn isBoolean(self: *const State, index: Idx) bool {
+        return self.typeOf(index) == .boolean;
+    }
+
+    pub fn isCFunction(self: *const State, index: Idx) bool {
+        return c.lua_iscfunction(self.inner, index) == 1;
+    }
+
+    pub fn isFunction(self: *const State, index: Idx) bool {
+        return self.typeOf(index) == .function;
+    }
+
+    pub fn isInteger(self: *const State, index: Idx) bool {
+        return c.lua_isinteger(self.inner, index) == 1;
+    }
+
+    pub fn isLightUserdata(self: *const State, index: Idx) bool {
+        return self.typeOf(index) == .light_userdata;
+    }
+
+    pub fn isNil(self: *const State, index: Idx) bool {
+        return self.typeOf(index) == .nil;
+    }
+
+    pub fn isNone(self: *const State, index: Idx) bool {
+        return self.typeOf(index) == .none;
+    }
+
+    pub fn isNoneOrNil(self: *const State, index: Idx) bool {
+        switch (self.typeOf(index)) {
+            .none, .nil => return true,
+            else => return false,
+        }
+    }
+
+    pub fn isNumber(self: *const State, index: Idx) bool {
+        return c.lua_isnumber(self.inner, index) == 1;
+    }
+
+    pub fn isString(self: *const State, index: Idx) bool {
+        return c.lua_isstring(self.inner, index) == 1;
+    }
+
+    pub fn isTable(self: *const State, index: Idx) bool {
+        return self.typeOf(index) == .table;
+    }
+
+    pub fn isThread(self: *const State, index: Idx) bool {
+        return self.typeOf(index) == .thread;
+    }
+
+    pub fn isUserdata(self: *const State, index: Idx) bool {
+        return c.lua_isuserdata(self.inner, index) == 1;
+    }
+
+    pub fn isYieldable(self: *const State) bool {
+        return c.lua_isyieldable(self.inner) == 1;
+    }
+
+    test "is" {
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        lua.pushNil();
+        try std.testing.expect(lua.isNil(-1));
+        try std.testing.expect(lua.isNoneOrNil(-1));
+        try std.testing.expect(!lua.isBoolean(-1));
+
+        lua.pushBoolean(true);
+        try std.testing.expect(lua.isBoolean(-1));
+        try std.testing.expect(!lua.isNumber(-1));
+
+        lua.pushInteger(42);
+        try std.testing.expect(lua.isInteger(-1));
+        try std.testing.expect(lua.isNumber(-1));
+
+        lua.pushLightUserdata(null);
+        try std.testing.expect(lua.isLightUserdata(-1));
+        try std.testing.expect(lua.isUserdata(-1));
+
+        lua.pushNumber(3.14);
+        try std.testing.expect(lua.isNumber(-1));
+        try std.testing.expect(!lua.isInteger(-1));
+
+        try std.testing.expectEqualStrings("hello", lua.pushString("hello"));
+        try std.testing.expect(lua.isString(-1));
+        try std.testing.expect(!lua.isNumber(-1));
+
+        try std.testing.expectEqualStrings("123", lua.pushString("123"));
+        try std.testing.expect(lua.isNumber(-1));
+
+        lua.createTable(0, 0);
+        try std.testing.expect(lua.isTable(-1));
+
+        _ = lua.pushThread();
+        try std.testing.expect(lua.isThread(-1));
+
+        const Wrapper = struct {
+            fn func(_: ?*LuaState) callconv(.c) c_int {
+                return 0;
+            }
+        };
+        lua.pushCFunction(Wrapper.func);
+        try std.testing.expect(lua.isCFunction(-1));
+        try std.testing.expect(lua.isFunction(-1));
+
+        try std.testing.expect(lua.isNone(42));
+
+        _ = lua.newUserdata(f32);
+        try std.testing.expect(lua.isUserdata(-1));
+        try std.testing.expect(!lua.isLightUserdata(-1));
+
+        try std.testing.expect(!lua.isYieldable());
+        const co = lua.newThread();
+        try std.testing.expect(co.isYieldable());
+    }
+
+    pub fn newUserdataUv(self: *const State, size: usize, nuvalue: usize) ?*anyopaque {
+        return c.lua_newuserdatauv(self.inner, size, @intCast(nuvalue));
+    }
+
+    pub fn newUserdata(self: *const State, T: type) *T {
+        const typed_ptr: *T = @ptrCast(@alignCast(self.newUserdataUv(@sizeOf(T), 1)));
+        if (builting.mode == .Debug) typed_ptr.* = undefined;
+        return typed_ptr;
+    }
+
+    pub fn newUserdataSlice(self: *const State, T: type, n: usize) []T {
+        var slice: []T = undefined;
+        slice.ptr = @ptrCast(@alignCast(self.newUserdataUv(@sizeOf(T), n)));
+        slice.len = n;
+        if (builting.mode == .Debug) @memset(slice, undefined);
+        return slice;
+    }
+
+    test newUserdataUv {
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        const num: *u8 = @ptrCast(@alignCast(lua.newUserdataUv(@sizeOf(u8), 1)));
+        num.* = 3;
+
+        const num2 = lua.newUserdata(u8);
+        num2.* = 10;
+
+        try std.testing.expectEqual(3, num.*);
+        try std.testing.expectEqual(10, num2.*);
+
+        const str = lua.newUserdataSlice(u8, 5);
+        @memcpy(str, "hello");
+        try std.testing.expectEqualStrings("hello", str);
     }
 
     /// Returns the type of the value in the given valid index
-    pub fn typeOf(state: *const State, idx: i32) Type {
-        return @enumFromInt(c.lua_type(state.inner, idx));
+    pub fn typeOf(state: *const State, index: Idx) Type {
+        return @enumFromInt(c.lua_type(state.inner, index));
     }
 
-    pub fn toLString(state: *const State, idx: i32) []const u8 {
+    fn toLStringInner(state: *const State, index: Idx, len: ?*usize) [*:0]const u8 {
+        return c.lua_tolstring(state.inner, index, len);
+    }
+
+    pub fn toString(self: *const State, index: Idx) [:0]const u8 {
+        return std.mem.sliceTo(self.toLStringInner(index, null), 0);
+    }
+
+    test toString {
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+        const expected = lua.pushString("Hello");
+        try std.testing.expectEqualStrings(expected, lua.toString(-1));
+    }
+
+    pub fn toLString(self: *const State, index: Idx) []const u8 {
         var len: usize = 0;
-        const ptr = c.lua_tolstring(state.inner, idx, &len);
+        const ptr = self.toLStringInner(index, &len);
         var slice: []const u8 = undefined;
         slice.ptr = ptr;
         slice.len = len;
         return slice;
     }
 
-    pub fn rawLen(self: *const State, idx: i32) usize {
-        return c.lua_rawlen(self.inner, idx);
+    pub fn newThread(self: *const State) State {
+        return .{ .inner = c.lua_newthread(self.inner).? };
     }
 
-    pub fn rawGetI(self: *const State, idx: i32, n: isize) Type {
-        return @enumFromInt(c.lua_rawgeti(self.inner, idx, n));
+    pub fn rawLen(self: *const State, index: Idx) usize {
+        return c.lua_rawlen(self.inner, index);
     }
 
-    pub fn toUserdata(self: *const State, idx: i32) ?*anyopaque {
-        return c.lua_touserdata(self.inner, idx);
+    pub fn rawGetI(self: *const State, index: Idx, n: isize) Type {
+        return @enumFromInt(c.lua_rawgeti(self.inner, index, n));
     }
 
-    pub fn toBoolean(self: *const State, idx: i32) bool {
-        if (c.lua_toboolean(self.inner, idx) == 0) return false;
-        return true;
+    pub fn toUserdata(self: *const State, index: Idx) ?*anyopaque {
+        return c.lua_touserdata(self.inner, index);
+    }
+
+    pub fn toUserdataT(self: *const State, T: type, index: Idx) !*T {
+        if (self.toUserdata(index)) |ptr| {
+            return @ptrCast(@alignCast(ptr));
+        }
+        return error.NullUserData;
+    }
+
+    pub fn toBoolean(self: *const State, index: Idx) bool {
+        return c.lua_toboolean(self.inner, index) == 1;
     }
 
     /// Pops a value from the stack and sets it as the new value of global name.
@@ -292,6 +476,202 @@ pub const State = struct {
     /// This function cannot be called with a pseudo-index, because a pseudo-index is not an actual stack position.
     pub fn remove(self: *const State, idx: i32) void {
         c.lua_remove(self.inner, idx);
+    }
+
+    // =============== Auxiliary Library ======================================
+
+    pub fn checkAny(self: *const State, arg: Idx) void {
+        c.luaL_checkany(self.inner, arg);
+    }
+
+    pub fn checkInteger(self: *const State, index: Idx) LuaInteger {
+        return c.luaL_checkinteger(self.inner, index);
+    }
+    test checkInteger {
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        lua.requiref("_G", Lib.base, true);
+        lua.requiref("string", Lib.string, true);
+
+        const FnWrapper = struct {
+            fn add(state: ?*LuaState) callconv(.c) c_int {
+                const l: State = .{ .inner = state.? };
+                l.checkAny(2);
+                l.pushInteger(l.checkInteger(1) + l.checkInteger(2));
+                return 1;
+            }
+        };
+
+        lua.pushCFunction(FnWrapper.add);
+        lua.setGlobal("add");
+
+        try lua.loadBuffer(
+            \\local expected = 15
+            \\local res = add(5, 10)
+            \\
+            \\assert(res == expected, string.format("expected %d, got %d", expected, res))
+        , "@checkInteger");
+        lua.pcall(0, 0, 0) catch |err| {
+            std.debug.print("{s}\n", .{lua.toLString(-1)});
+            return err;
+        };
+    }
+
+    fn checkLStringInner(self: *const State, arg: Idx, len: ?*usize) [*:0]const u8 {
+        return c.luaL_checklstring(self.inner, arg, len);
+    }
+
+    pub fn checkString(self: *const State, arg: Idx) [:0]const u8 {
+        return std.mem.sliceTo(self.checkLStringInner(arg, null), 0);
+    }
+
+    pub fn checkLString(self: *const State, arg: Idx) []const u8 {
+        var len: usize = undefined;
+        const ptr = self.checkLStringInner(arg, &len);
+        var slice: [:0]const u8 = undefined;
+        slice.ptr = ptr;
+        slice.len = len;
+        return slice;
+    }
+    test checkLString {
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        lua.requiref("_G", Lib.base, true);
+        lua.requiref("string", Lib.string, true);
+
+        const FnWrapper = struct {
+            fn concat(state: ?*LuaState) callconv(.c) c_int {
+                const l: State = .{ .inner = state.? };
+                l.checkAny(1);
+                const str1 = l.checkLString(1);
+                const str2 = l.checkLString(2);
+                const res = l.newUserdataSlice(u8, str1.len + str2.len);
+                @memcpy(res[0..str1.len], str1);
+                @memcpy(res[str1.len..], str2);
+                _ = l.pushLString(res);
+                return 1;
+            }
+        };
+
+        lua.pushCFunction(FnWrapper.concat);
+        lua.setGlobal("concat");
+
+        try lua.loadBuffer(
+            \\local expected = "hello world"
+            \\local res = concat("hello", " world")
+            \\
+            \\assert(res == expected, string.format("expected %s, got %s", expected, res))
+        , "@checkLString");
+        lua.pcall(0, 0, 0) catch |err| {
+            std.debug.print("{s}\n", .{lua.toLString(-1)});
+            return err;
+        };
+    }
+
+    test checkString {
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        lua.requiref("_G", Lib.base, true);
+        lua.requiref("string", Lib.string, true);
+
+        const FnWrapper = struct {
+            fn concat(state: ?*LuaState) callconv(.c) c_int {
+                const l: State = .{ .inner = state.? };
+                const str1 = l.checkString(1);
+                const str2 = l.checkString(2);
+                const res = l.newUserdataSlice(u8, str1.len + str2.len);
+                @memcpy(res[0..str1.len], str1);
+                @memcpy(res[str1.len..], str2);
+                _ = l.pushLString(res);
+                return 1;
+            }
+        };
+
+        lua.pushCFunction(FnWrapper.concat);
+        lua.setGlobal("concat");
+
+        try lua.loadBuffer(
+            \\local expected = "hello world"
+            \\local res = concat("hello", " world")
+            \\
+            \\assert(res == expected, string.format("expected %s, got %s", expected, res))
+        , "@checkString");
+        lua.pcall(0, 0, 0) catch |err| {
+            std.debug.print("{s}\n", .{lua.toLString(-1)});
+            return err;
+        };
+    }
+
+    pub fn checkType(self: *const State, arg: Idx, t: Type) void {
+        c.luaL_checktype(self.inner, arg, @intFromEnum(t));
+    }
+    test checkType {
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        lua.requiref("_G", Lib.base, true);
+        lua.requiref("string", Lib.string, true);
+
+        const FnWrapper = struct {
+            fn add(state: ?*LuaState) callconv(.c) c_int {
+                const inner_lua: State = .{ .inner = state.? };
+                inner_lua.checkType(1, .number);
+                inner_lua.checkType(2, .number);
+                const a = inner_lua.toInteger(1);
+                const b = inner_lua.toInteger(2);
+                inner_lua.pushInteger(a + b);
+                return 1;
+            }
+        };
+
+        lua.pushCFunction(FnWrapper.add);
+        lua.setGlobal("add");
+
+        try lua.loadBuffer(
+            \\local expected = 15
+            \\local res = add(5, 10)
+            \\
+            \\assert(res == expected, string.format("expected %d, got %d", expected, res))
+        , "@checkType");
+        lua.pcall(0, 0, 0) catch |err| {
+            std.debug.print("{s}\n", .{lua.toLString(-1)});
+            return err;
+        };
+    }
+
+    pub fn loadBuffer(self: *const State, buff: []const u8, name: [:0]const u8) Error!void {
+        try self.loadBufferx(buff, name, null);
+    }
+
+    pub fn loadBufferx(self: *const State, buff: []const u8, name: [:0]const u8, mode: [*c]const u8) Error!void {
+        try checkError(c.luaL_loadbufferx(self.inner, buff.ptr, buff.len, name, mode));
+    }
+
+    // TODO: loadFile, loadFileX
+
+    /// Loads a string as a Lua chunk. This function uses lua_load to load the chunk in the zero-terminated string s.
+    /// This function returns the same results as lua_load.
+    /// Also as lua_load, this function only loads the chunk; it does not run it.
+    pub fn loadString(state: *const State, string: [:0]const u8) Error!void {
+        try checkError(c.luaL_loadstring(state.inner, string));
+    }
+
+    /// If package.loaded[modname] is not true,
+    /// calls the function openf with the string modname as an argument
+    /// and sets the call result to package.loaded[modname], as if that function has been called through require.
+    ///
+    /// If glb is true, also stores the module into the global modname.
+    ///
+    /// Leaves a copy of the module on the stack.
+    pub fn requiref(self: *const State, modname: [:0]const u8, open_l: CFunction, glb: bool) void {
+        c.luaL_requiref(self.inner, modname, open_l, @intFromBool(glb));
     }
 };
 
@@ -355,3 +735,7 @@ pub const Op = enum(c_int) {
 
 pub const CFunction = *const fn (?*LuaState) callconv(.c) c_int;
 pub const KFunction = ?*const fn (state: ?*LuaState, status: isize, ctx: isize) callconv(.c) isize;
+
+test {
+    _ = State;
+}
