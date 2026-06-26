@@ -125,6 +125,9 @@ pub const State = struct {
         c.lua_setfield(self.inner, index, k);
     }
 
+    pub fn setTable(self: *const State, index: Idx) void {
+        c.lua_settable(self.inner, index);
+    }
     /// Pushes the string pointed to by s with size len onto the stack.
     /// Lua will make or reuse an internal copy of the given string,
     /// so the memory at `str` can be freed or reused immediately after the function returns.
