@@ -207,6 +207,10 @@ pub const State = struct {
         return std.mem.sliceTo(c.lua_pushstring(self.inner, str), 0);
     }
 
+    pub fn pushValue(self: *const State, index: Idx) void {
+        c.lua_pushvalue(self.inner, index);
+    }
+
     pub fn pushInteger(self: *const State, n: LuaInteger) void {
         c.lua_pushinteger(self.inner, n);
     }
@@ -500,6 +504,10 @@ pub const State = struct {
         return @enumFromInt(c.lua_rawgeti(self.inner, index, n));
     }
 
+    pub fn rawSetI(self: *const State, index: Idx, i: LuaInteger) void {
+        c.lua_rawseti(self.inner, index, i);
+    }
+
     pub fn toUserdata(self: *const State, index: Idx) ?*anyopaque {
         return c.lua_touserdata(self.inner, index);
     }
@@ -518,6 +526,10 @@ pub const State = struct {
     /// Pops a value from the stack and sets it as the new value of global name.
     pub fn setGlobal(self: *const State, name: [:0]const u8) void {
         c.lua_setglobal(self.inner, name);
+    }
+
+    pub fn getGlobal(self: *const State, name: [:0]const u8) Type {
+        return @enumFromInt(c.lua_getglobal(self.inner, name));
     }
 
     /// Pushes a nil value onto the stack.
@@ -715,6 +727,10 @@ pub const State = struct {
 
     pub fn loadBuffer(self: *const State, buff: []const u8, name: [:0]const u8) Error!void {
         try self.loadBufferx(buff, name, null);
+    }
+
+    pub fn ref(self: *const State, t: Idx) Idx {
+        return c.luaL_ref(self.inner, t);
     }
 
     pub fn loadBufferx(self: *const State, buff: []const u8, name: [:0]const u8, mode: [*c]const u8) Error!void {
