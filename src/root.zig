@@ -12,16 +12,17 @@
 //! 'e' means the function can run arbitrary Lua code, either directly or through metamethods, and therefore may raise any errors.
 
 const std = @import("std");
-const builting = @import("builtin");
-const c = @import("c");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const builting = @import("builtin");
 
-const LuaInteger = i64;
-const LuaNumber = f64;
-const Idx = i32;
-
+const c = @import("c");
 pub const LuaState = c.lua_State;
+pub const REGISTRYINDEX: Idx = c.LUA_REGISTRYINDEX;
+
+pub const LuaInteger = i64;
+pub const LuaNumber = f64;
+pub const Idx = i32;
 
 pub const Error = error{
     NewStateError,
