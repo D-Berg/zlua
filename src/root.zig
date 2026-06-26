@@ -128,6 +128,69 @@ pub const State = struct {
     pub fn setTable(self: *const State, index: Idx) void {
         c.lua_settable(self.inner, index);
     }
+
+    const WriteContect = struct {
+        w: *std.Io.Writer,
+        e: ?std.Io.Writer.Error = null,
+    };
+    pub fn dump(self: *const State, w: *std.Io.Writer, strip: bool) !void {
+        var ctx: WriteContect = .{ .w = w };
+        const rc = c.lua_dump(
+            self.inner,
+            lua_dump_write_fn,
+            @ptrCast(@alignCast(&ctx)),
+            @intFromBool(strip),
+        );
+        if (ctx.e) |err| return err;
+        if (rc != 0) return error.LuaDumpFail;
+    }
+
+    fn lua_dump_write_fn(inner_state: ?*LuaState, p: ?*const anyopaque, sz: usize, ud: ?*anyopaque) callconv(.c) c_int {
+        _ = inner_state;
+
+        const ctx: *WriteContect = @ptrCast(@alignCast(ud));
+        if (p == null or sz == 0) {
+            return 0;
+        }
+        var slice: []const u8 = undefined;
+        slice.ptr = @ptrCast(@alignCast(p.?));
+        slice.len = sz;
+
+        ctx.w.writeAll(slice) catch |err| {
+            ctx.e = err;
+            return 1;
+        };
+
+        return 0;
+    }
+
+    test dump {
+        const gpa = std.testing.allocator;
+
+        var buffer: [1024]u8 = undefined;
+        var w = std.Io.Writer.fixed(&buffer);
+
+        var lua: State = .{ .gpa = gpa };
+        try lua.new(0);
+        defer lua.close();
+
+        const lua_code =
+            \\return "hello world"
+        ;
+
+        try lua.loadBuffer(lua_code, "@test.lua");
+        try lua.dump(&w, false);
+        lua.pop(1);
+
+        try lua.loadBuffer(w.buffered(), "@bytecode.lua");
+
+        lua.pcall(0, 1, 0) catch |err| {
+            std.log.err("{t}: {s}", .{ err, lua.toLString(-1) });
+        };
+
+        try std.testing.expectEqualStrings("hello world", lua.toLString(-1));
+    }
+
     /// Pushes the string pointed to by s with size len onto the stack.
     /// Lua will make or reuse an internal copy of the given string,
     /// so the memory at `str` can be freed or reused immediately after the function returns.
