@@ -45,15 +45,6 @@ pub const Error = error{
     Unknown,
 };
 
-pub const Lib = struct {
-    pub const base = c.luaopen_base;
-    pub const coroutine = c.luaopen_coroutine;
-    pub const package = c.luaopen_package;
-    pub const utf8 = c.luaopen_utf8;
-    pub const string = c.luaopen_string;
-    // TODO: add more libs;
-};
-
 pub const State = struct {
     inner: *LuaState = undefined,
     /// The allocator for which lua will use for all allocations.
@@ -107,6 +98,58 @@ pub const State = struct {
     pub fn openLibs(self: *const State) void {
         c.luaL_openlibs(self.inner);
     }
+
+    pub fn openBase(self: *const State) c_int {
+        return Open.base(self.inner);
+    }
+
+    pub fn openPackage(self: *const State) c_int {
+        return Open.package(self.inner);
+    }
+
+    pub fn openCoroutine(self: *const State) c_int {
+        return Open.coroutine(self.inner);
+    }
+
+    pub fn openDebug(self: *const State) c_int {
+        return Open.debug(self.inner);
+    }
+
+    pub fn openIo(self: *const State) c_int {
+        return Open.io(self.inner);
+    }
+
+    pub fn openMath(self: *const State) c_int {
+        return Open.math(self.inner);
+    }
+
+    pub fn openOs(self: *const State) c_int {
+        return Open.os(self.inner);
+    }
+    pub fn openString(self: *const State) c_int {
+        return Open.string(self.inner);
+    }
+
+    pub fn openTable(self: *const State) c_int {
+        return Open.table(self.inner);
+    }
+
+    pub fn openUtf8(self: *const State) c_int {
+        return Open.utf8(self.inner);
+    }
+
+    pub const Open = struct {
+        pub const base = c.luaopen_base;
+        pub const package = c.luaopen_package;
+        pub const coroutine = c.luaopen_coroutine;
+        pub const debug = c.luaopen_debug;
+        pub const io = c.luaopen_io;
+        pub const math = c.luaopen_math;
+        pub const os = c.luaopen_os;
+        pub const string = c.luaopen_string;
+        pub const table = c.luaopen_table;
+        pub const utf8 = c.luaopen_utf8;
+    };
 
     /// Creates a new empty table and pushes it onto the stack. It is equivalent to `createTable(0, 0)`
     pub fn newTable(self: *const State) void {
@@ -571,8 +614,8 @@ pub const State = struct {
         try lua.new(0);
         defer lua.close();
 
-        lua.requiref("_G", Lib.base, true);
-        lua.requiref("string", Lib.string, true);
+        lua.requiref("_G", Open.base, true);
+        lua.requiref("string", Open.string, true);
 
         const FnWrapper = struct {
             fn add(state: ?*LuaState) callconv(.c) c_int {
@@ -619,8 +662,8 @@ pub const State = struct {
         try lua.new(0);
         defer lua.close();
 
-        lua.requiref("_G", Lib.base, true);
-        lua.requiref("string", Lib.string, true);
+        lua.requiref("_G", Open.base, true);
+        lua.requiref("string", Open.string, true);
 
         const FnWrapper = struct {
             fn concat(state: ?*LuaState) callconv(.c) c_int {
@@ -656,8 +699,8 @@ pub const State = struct {
         try lua.new(0);
         defer lua.close();
 
-        lua.requiref("_G", Lib.base, true);
-        lua.requiref("string", Lib.string, true);
+        lua.requiref("_G", Open.base, true);
+        lua.requiref("string", Open.string, true);
 
         const FnWrapper = struct {
             fn concat(state: ?*LuaState) callconv(.c) c_int {
@@ -695,8 +738,8 @@ pub const State = struct {
         try lua.new(0);
         defer lua.close();
 
-        lua.requiref("_G", Lib.base, true);
-        lua.requiref("string", Lib.string, true);
+        lua.requiref("_G", Open.base, true);
+        lua.requiref("string", Open.string, true);
 
         const FnWrapper = struct {
             fn add(state: ?*LuaState) callconv(.c) c_int {
