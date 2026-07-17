@@ -331,7 +331,7 @@ pub const State = struct {
 
         const chunk_name = std.fmt.bufPrintZ(chunk_name_buf, "@{s}", .{file_name}) catch file_name;
 
-        return try self.load(r, chunk_name, mode);
+        return try self.load(r, chunk_name.ptr, mode);
     }
 
     test loadFileAt {
@@ -385,6 +385,24 @@ pub const State = struct {
 
     pub fn pushString(self: *const State, str: [:0]const u8) [:0]const u8 {
         return std.mem.sliceTo(c.lua_pushstring(self.inner, str), 0);
+    }
+
+    pub fn pushfString(self: *const State, fmt: [:0]const u8, args: anytype) [:0]const u8 {
+        return std.mem.sliceTo(@call(.auto, c.lua_pushfstring, .{ self.inner, fmt } ++ args), 0);
+    }
+
+    pub fn @"error"(self: *const State) noreturn {
+        _ = c.lua_error(self.inner);
+        unreachable;
+    }
+
+    pub fn Lerror(self: *const State, fmt: [:0]const u8, args: anytype) noreturn {
+        _ = @call(.auto, c.luaL_error, .{ self.inner, fmt.ptr } ++ args);
+        unreachable;
+    }
+
+    pub fn unref(self: *const State, table: Idx, reference: Idx) void {
+        c.luaL_unref(self.inner, table, reference);
     }
 
     pub fn pushValue(self: *const State, index: Idx) void {
