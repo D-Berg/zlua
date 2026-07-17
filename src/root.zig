@@ -234,6 +234,143 @@ pub const State = struct {
         try std.testing.expectEqualStrings("hello world", lua.toLString(-1));
     }
 
+    pub fn doFile(self: *const State, io: std.Io, file_name: []const u8) !void {
+        try self.loadFile(io, file_name);
+        try self.pcall(0, c.LUA_MULTRET, 0);
+    }
+
+    const ReadContext = struct {
+        r: *std.Io.Reader,
+        e: ?std.Io.Reader.Error = null,
+        buf: [1024]u8 = undefined,
+    };
+
+    fn load_reader(_: ?*LuaState, data: ?*anyopaque, size: [*c]usize) callconv(.c) [*c]const u8 {
+        const ctx: *ReadContext = @ptrCast(@alignCast(data));
+
+        size.* = ctx.r.readSliceShort(&ctx.buf) catch |err| {
+            ctx.e = err;
+            return null;
+        };
+
+        const str = ctx.buf[0..size.*];
+        return str.ptr;
+    }
+
+    pub fn load(self: *const State, r: *std.Io.Reader, chunkname: [*c]const u8, mode: [*c]const u8) !void {
+        var ctx: ReadContext = .{ .r = r };
+        const rc = c.lua_load(self.inner, load_reader, @ptrCast(@alignCast(&ctx)), chunkname, mode);
+        if (ctx.e) |err| {
+            var buf: [256]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "cannot read chunk: {t}", .{err}) catch "cannot read chunk";
+            _ = self.pushLString(msg);
+            return err;
+        }
+        try checkError(rc);
+    }
+
+    test load {
+        const io = std.testing.io;
+        var tmp_dir = std.testing.tmpDir(.{ .access_sub_paths = true });
+        defer tmp_dir.cleanup();
+
+        const lua_file = try tmp_dir.dir.createFile(io, "test.lua", .{ .read = true });
+        defer lua_file.close(io);
+
+        try lua_file.writePositionalAll(io,
+            \\return "hello world"
+        , 0);
+
+        var file_reader = lua_file.reader(io, &.{});
+        const reader = &file_reader.interface;
+
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        lua.load(reader, "test chunk", null) catch |err| {
+            std.log.err("load failed with err: {t}, {s}", .{ err, lua.toLString(-1) });
+            return err;
+        };
+
+        try lua.pcall(0, 1, 0);
+
+        try std.testing.expectEqualStrings("hello world", lua.toLString(-1));
+    }
+
+    pub fn loadFile(self: *const State, io: std.Io, file_name: []const u8) !void {
+        try self.loadFileAt(io, .cwd(), file_name, null);
+    }
+
+    pub fn loadFileX(self: *const State, io: std.Io, file_name: []const u8, mode: [*c]const u8) !void {
+        try self.loadFileAt(io, .cwd(), file_name, mode);
+    }
+
+    fn loadFileAt(self: *const State, io: std.Io, dir: std.Io.Dir, file_name: []const u8, mode: [*c]const u8) !void {
+        const file, const should_close = blk: {
+            if (file_name.len != 0) {
+                break :blk .{ dir.openFile(io, file_name, .{ .mode = .read_only }) catch |err| {
+                    var buf: [2 * std.fs.max_path_bytes]u8 = undefined;
+                    const msg = std.fmt.bufPrint(&buf, "cannot open {s}: {t}", .{ file_name, err }) catch "file error";
+                    _ = self.pushLString(msg);
+                    return Error.File;
+                }, true };
+            }
+
+            break :blk .{ std.Io.File.stdin(), false };
+        };
+        defer if (should_close) file.close(io);
+
+        var buf: [1024]u8 = undefined;
+        var file_reader = file.reader(io, &buf);
+        const r: *std.Io.Reader = &file_reader.interface;
+
+        const chunk_name_buf = self.newUserdataSlice(u8, file_name.len + 2);
+        const chunk_name_buf_index = self.getTop();
+        defer self.remove(chunk_name_buf_index);
+
+        const chunk_name = std.fmt.bufPrintZ(chunk_name_buf, "@{s}", .{file_name}) catch file_name;
+
+        return try self.load(r, chunk_name, mode);
+    }
+
+    test loadFileAt {
+        const io = std.testing.io;
+        var tmp_dir = std.testing.tmpDir(.{ .access_sub_paths = true });
+        defer tmp_dir.cleanup();
+
+        const lua_file = try tmp_dir.dir.createFile(io, "test.lua", .{ .read = true });
+        defer lua_file.close(io);
+
+        try lua_file.writePositionalAll(io,
+            \\return "hello world"
+        , 0);
+
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        try lua.loadFileAt(io, tmp_dir.dir, "test.lua", null);
+
+        try lua.pcall(0, 1, 0);
+
+        try std.testing.expectEqualStrings("hello world", lua.toLString(-1));
+    }
+
+    test "loadFileAtError" {
+        const io = std.testing.io;
+        var tmp_dir = std.testing.tmpDir(.{ .access_sub_paths = true });
+        defer tmp_dir.cleanup();
+
+        var lua: State = .{ .gpa = std.testing.allocator };
+        try lua.new(0);
+        defer lua.close();
+
+        const res = lua.loadFileAt(io, tmp_dir.dir, "missing.lua", null);
+        try std.testing.expectError(Error.File, res);
+        try std.testing.expect(std.mem.startsWith(u8, lua.toLString(-1), "cannot open missing.lua: "));
+    }
+
     /// Pushes the string pointed to by s with size len onto the stack.
     /// Lua will make or reuse an internal copy of the given string,
     /// so the memory at `str` can be freed or reused immediately after the function returns.
@@ -316,7 +453,6 @@ pub const State = struct {
         ));
     }
 
-    /// TODO: convert to Error union
     fn checkError(rc: c_int) Error!void {
         switch (rc) {
             c.LUA_OK => return,
@@ -779,8 +915,6 @@ pub const State = struct {
     pub fn loadBufferx(self: *const State, buff: []const u8, name: [:0]const u8, mode: [*c]const u8) Error!void {
         try checkError(c.luaL_loadbufferx(self.inner, buff.ptr, buff.len, name, mode));
     }
-
-    // TODO: loadFile, loadFileX
 
     /// Loads a string as a Lua chunk. This function uses lua_load to load the chunk in the zero-terminated string s.
     /// This function returns the same results as lua_load.
