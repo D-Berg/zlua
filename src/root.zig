@@ -45,6 +45,19 @@ pub const Error = error{
     Unknown,
 };
 
+pub const Open = struct {
+    pub const base = c.luaopen_base;
+    pub const package = c.luaopen_package;
+    pub const coroutine = c.luaopen_coroutine;
+    pub const debug = c.luaopen_debug;
+    pub const io = c.luaopen_io;
+    pub const math = c.luaopen_math;
+    pub const os = c.luaopen_os;
+    pub const string = c.luaopen_string;
+    pub const table = c.luaopen_table;
+    pub const utf8 = c.luaopen_utf8;
+};
+
 pub const State = struct {
     inner: *LuaState = undefined,
     /// The allocator for which lua will use for all allocations.
@@ -137,19 +150,6 @@ pub const State = struct {
     pub fn openUtf8(self: *const State) c_int {
         return Open.utf8(self.inner);
     }
-
-    pub const Open = struct {
-        pub const base = c.luaopen_base;
-        pub const package = c.luaopen_package;
-        pub const coroutine = c.luaopen_coroutine;
-        pub const debug = c.luaopen_debug;
-        pub const io = c.luaopen_io;
-        pub const math = c.luaopen_math;
-        pub const os = c.luaopen_os;
-        pub const string = c.luaopen_string;
-        pub const table = c.luaopen_table;
-        pub const utf8 = c.luaopen_utf8;
-    };
 
     /// Creates a new empty table and pushes it onto the stack. It is equivalent to `createTable(0, 0)`
     pub fn newTable(self: *const State) void {
